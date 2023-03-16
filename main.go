@@ -32,6 +32,8 @@ func app() error {
 		return err
 	}
 
+	// Setup a client with a custom WarningHandler that collects the warnings,
+	// instead of printing them to std...err? stdout?
 	wh := &warningsMapper{}
 	config.WarningHandler = wh
 	client, err := kubernetes.NewForConfig(config)
@@ -39,8 +41,54 @@ func app() error {
 		return err
 	}
 
-	if err := checkAllNamespaces(client); err != nil {
+	// Get a list of all the namespaces.
+	namespaceList, err := client.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
 		return err
+	}
+
+	// Gather all the warnings for each namespace, when enforcing audit-level.
+	for _, namespace := range namespaceList.Items {
+		stricterNamespace := mapAuditToEnforce(&namespace)
+		_, err := client.CoreV1().Namespaces().Update(context.Background(), stricterNamespace, metav1.UpdateOptions{DryRun: []string{"All"}})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Iterate through the collected violations by namespace.
+	for _, psv := range wh.PSViolations {
+		// Iterate through the pods within a namespace that violate the new
+		// PodSecurity level and get the pod's deployment.
+		for _, podViolation := range psv.PodViolations {
+			// Get the pod.
+			pod, err := client.CoreV1().Pods(psv.Namespace).Get(context.Background(), podViolation.Name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			podViolation.Pod = pod
+
+			// If the pod is owned by a Deployment, get the deployment.
+			// If the pod is owned by a ReplicaSet, get the ReplicaSet's owner.
+			switch {
+			case pod.OwnerReferences[0].Kind == "Deployment":
+				deployment, err := client.AppsV1().Deployments(psv.Namespace).Get(context.Background(), pod.OwnerReferences[0].Name, metav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				podViolation.Deployment = deployment
+			case pod.OwnerReferences[0].Kind == "ReplicaSet":
+				replicaSet, err := client.AppsV1().ReplicaSets(psv.Namespace).Get(context.Background(), pod.OwnerReferences[0].Name, metav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				deployment, err := client.AppsV1().Deployments(psv.Namespace).Get(context.Background(), replicaSet.OwnerReferences[0].Name, metav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				podViolation.Deployment = deployment
+			}
+		}
 	}
 
 	warnings := wh.String()
@@ -52,18 +100,19 @@ func app() error {
 // Warnings Mapping
 type warningsMapper struct {
 	defaultHandler rest.WarningHandler
-	PSViolations   []PSViolation
+	PSViolations   []*PSViolation
 }
 
 type PSViolation struct {
 	Namespace     string
 	Level         string
-	PodViolations []PodViolation
+	PodViolations []*PodViolation
 }
 
 type PodViolation struct {
 	Name       string
-	Peployment *appsv1.Deployment
+	Deployment *appsv1.Deployment
+	Pod        *corev1.Pod
 	Violations []string
 }
 
@@ -77,7 +126,7 @@ func (w *warningsMapper) HandleWarningHeader(code int, agent string, text string
 	}
 
 	if len(w.PSViolations) == 0 {
-		w.PSViolations = []PSViolation{}
+		w.PSViolations = []*PSViolation{}
 	}
 
 	// Namespace Warning Message
@@ -89,19 +138,19 @@ func (w *warningsMapper) HandleWarningHeader(code int, agent string, text string
 			Level:     titleMatches[1][1],
 		}
 
-		w.PSViolations = append(w.PSViolations, psv)
+		w.PSViolations = append(w.PSViolations, &psv)
 	} else {
 		// Pod Warning Message, assume last PSViolation is the one we belong to.
 		lastPSViolation := w.PSViolations[len(w.PSViolations)-1]
 		// The text should look like this: {pod name}: {policy warning A}, {policy warning B}, ...
-		textSplit := strings.Split(text, ":")
+		textSplit := strings.Split(text, ": ")
 		podName := strings.TrimSpace(textSplit[0])
-		violations := strings.Split(textSplit[1], ",")
+		violations := strings.Split(textSplit[1], ", ")
 		podViolation := PodViolation{
 			Name:       podName,
 			Violations: violations,
 		}
-		lastPSViolation.PodViolations = append(lastPSViolation.PodViolations, podViolation)
+		lastPSViolation.PodViolations = append(lastPSViolation.PodViolations, &podViolation)
 	}
 
 	if w.defaultHandler == nil {
@@ -129,35 +178,6 @@ func (w *warningsMapper) String() string {
 	return b.String()
 }
 
-func checkProblematicNamespace(client *kubernetes.Clientset) error {
-	namespace, err := client.CoreV1().Namespaces().Get(context.Background(), "p0t-sekurity", metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	if err := dryUpdateNamespace(client, mapAuditToEnforce(namespace)); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func checkAllNamespaces(client *kubernetes.Clientset) error {
-	namespaceList, err := client.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	for _, namespace := range namespaceList.Items {
-		modifiedNs := mapAuditToEnforce(&namespace)
-		if err := dryUpdateNamespace(client, modifiedNs); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func mapAuditToEnforce(namespace *corev1.Namespace) *corev1.Namespace {
 	ns := namespace.DeepCopy()
 
@@ -168,12 +188,4 @@ func mapAuditToEnforce(namespace *corev1.Namespace) *corev1.Namespace {
 	ns.Labels["pod-security.kubernetes.io/enforce"] = namespace.Labels["pod-security.kubernetes.io/audit"]
 
 	return ns
-}
-
-func dryUpdateNamespace(client *kubernetes.Clientset, namespace *corev1.Namespace) error {
-	_, err := client.CoreV1().Namespaces().Update(context.Background(), namespace, metav1.UpdateOptions{
-		DryRun: []string{"All"},
-	})
-
-	return err
 }

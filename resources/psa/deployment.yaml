@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: p0t-sekurity-deployment
+  namespace: p0t-sekurity
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: p0t-sekurity-pod
+  template:
+    metadata:
+      labels:
+        app: p0t-sekurity-pod
+    spec:
+      serviceAccountName: p0t-sekurity-sa
+      containers:
+      - name: busybox
+        image: busybox
+        command: [ "/bin/sh", "-c", "sleep 3600" ]
+        securityContext:
+          privileged: true
+
