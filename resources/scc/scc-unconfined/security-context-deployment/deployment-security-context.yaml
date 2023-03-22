@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: with-security-context
+  namespace: scc-plays-unconfined-security-context
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busybox
+  template:
+    metadata:
+      labels:
+        app: busybox
+    spec:
+      serviceAccount: busybox-service-account
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["/bin/sh", "-c", "while true; do echo $(date); sleep 10; done"]

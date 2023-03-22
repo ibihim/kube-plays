@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: nginx-cluster-role
+  name: scc-runtime-default
 rules:
 - apiGroups:
   - security.openshift.io
@@ -10,4 +10,4 @@ rules:
   verbs:
   - use
   resourceNames:
-  - my-scc-unconfined
+  - my-scc-runtime-default

@@ -1,8 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: busybox-deployment-no-scc
-  namespace: scc-play-1
+  name: busybox-deployment
+  namespace: scc-plays-runtime-default
 spec:
   replicas: 1
   selector:
@@ -15,7 +15,7 @@ spec:
       annotations:
         seccomp.security.alpha.kubernetes.io/pod: unconfined
     spec:
-      serviceAccount: busybox-serviceaccount-no-scc
+      serviceAccount: busybox-service-account
       containers:
       - name: busybox
         image: busybox
