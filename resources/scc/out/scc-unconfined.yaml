@@ -1,13 +1,13 @@
 kind: SecurityContextConstraints
 apiVersion: security.openshift.io/v1
 metadata:
-  name: my-scc-runtime-default
+  name: my-scc-unconfined
 seccompProfiles:
-- "*"
+- Unconfined
 allowPrivilegedContainer: false
 runAsUser:
   type: RunAsAny
 seLinuxContext:
   type: RunAsAny
 users:
-- ibihim
+- kostrows
