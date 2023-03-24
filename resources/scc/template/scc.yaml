@@ -1,0 +1,17 @@
+kind: SecurityContextConstraints
+apiVersion: security.openshift.io/v1
+metadata:
+  name: my-scc-runtime-default
+seccompProfiles:
+{{- range .SeccompProfiles}}
+- {{.}}
+{{- end}}
+allowPrivilegedContainer: false
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+users:
+{{- range .Users}}
+- {{.}}
+{{- end}}

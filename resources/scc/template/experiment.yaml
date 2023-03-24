@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busybox-deployment
+  namespace: {{.Namespace}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busybox
+  template:
+    metadata:
+      labels:
+        app: busybox
+      {{- range .Annotations}}
+      annotations:
+        {{.}}
+      {{- end}}
+    spec:
+      {{- if .PodField}}
+      securityContext:
+        seccompProfile:
+          type: {{.PodField}}
+      {{- end}}
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["/bin/sh", "-c", "while true; do echo $(date); sleep 10; done"]
+        {{- if .ContainerField}}
+        securityContext:
+          type: {{.ContainerField}}
+        {{- end}}

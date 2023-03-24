@@ -1,8 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: busybox-deployment-no-scc
-  namespace: scc-plays-no-scc-unconfined
+  name: busybox-deployment
+  namespace: wildcard-pod-no-annotations-no-fields
 spec:
   replicas: 1
   selector:
@@ -13,10 +13,6 @@ spec:
       labels:
         app: busybox
     spec:
-      serviceAccount: busybox-serviceaccount-no-scc
-      securityContext:
-        seccompProfile:
-          type: Unconfined
       containers:
       - name: busybox
         image: busybox
