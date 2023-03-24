@@ -1,19 +1,12 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Pod
 metadata:
-  name: busybox-deployment
+  name: busybox
   namespace: unconfined-pod-no-annotations-no-fields
+  labels:
+    app: busybox
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: busybox
-  template:
-    metadata:
-      labels:
-        app: busybox
-    spec:
-      containers:
-      - name: busybox
-        image: busybox
-        command: ["/bin/sh", "-c", "while true; do echo $(date); sleep 10; done"]
+  containers:
+  - name: busybox
+    image: busybox
+    command: ["/bin/sh", "-c", "while true; do echo $(date); sleep 10; done"]
