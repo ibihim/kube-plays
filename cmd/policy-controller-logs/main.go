@@ -19,15 +19,38 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+const (
+	controllerName = "pod-security-admission-label-synchronization-controller"
+)
+
 func main() {
-	pattern := flag.String("pattern", "= pod-security-admission-label-synchronization-controller =", "Pattern to search for in logs")
-	createResources := flag.Bool("create", false, "Create a new namespace and pod before searching")
+	pattern := flag.String("pattern", fmt.Sprintf("= %s =", controllerName), "Pattern to search for in logs")
+	createResources := flag.Bool("create", false, "Create new namespaces and pods before searching")
+	getLogs := flag.Bool("logs", true, "Get logs for the controller")
+	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
 	// Use the current context in kubeconfig
 	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 	if envVar := os.Getenv("KUBECONFIG"); envVar != "" {
 		kubeconfig = envVar
+	}
+
+	if *debug {
+		fmt.Printf(`
+Options:
+	pattern: %s
+	createResources: %t
+	getLogs: %t
+	debug: %t
+	kubeconfig: %s
+`,
+			pattern,
+			createResources,
+			getLogs,
+			debug,
+			kubeconfig,
+		)
 	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -41,62 +64,84 @@ func main() {
 		panic(err.Error())
 	}
 
-	// Create namespace and pod
+	// Create namespaces and pods
 	if *createResources {
+		// Namespace 1
 		err = createNamespaceAndPod(clientset, "test-namespace-1", map[string]string{
-			"pod-security.kubernetes.io/warn": "restricted",
-		})
-		if err != nil {
-			fmt.Printf("Error creating namespace and pod: %v\n", err)
-			return
-		}
-		err = createNamespaceAndPod(clientset, "test-namespace-2", map[string]string{
+			"pod-security.kubernetes.io/warn":                "restricted",
+			"pod-security.kubernetes.io/audit":               "restricted",
 			"security.openshift.io/scc.podSecurityLabelSync": "false",
-		})
+		}, controllerName)
 		if err != nil {
-			fmt.Printf("Error creating namespace and pod: %v\n", err)
+			fmt.Printf("Error creating namespace and pod 1: %v\n", err)
 			return
 		}
-		err = createNamespaceAndPod(clientset, "openshift-test-namespace-3", map[string]string{})
+
+		// Namespace 2
+		err = createNamespaceAndPod(clientset, "openshift-test-namespace-2", nil, "")
 		if err != nil {
-			fmt.Printf("Error creating namespace and pod: %v\n", err)
+			fmt.Printf("Error creating namespace and pod 2: %v\n", err)
+			return
+		}
+
+		// Namespace 3
+		err = createNamespaceAndPod(clientset, "test-namespace-3", map[string]string{
+			"pod-security.kubernetes.io/warn":  "restricted",
+			"pod-security.kubernetes.io/audit": "restricted",
+		}, "kubectl-edit")
+		if err != nil {
+			fmt.Printf("Error creating namespace and pod 3: %v\n", err)
 			return
 		}
 	}
 
-	// Get all pods in all namespaces
-	pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		panic(err.Error())
-	}
+	if *getLogs {
+		// Get all pods in all namespaces
+		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			panic(err.Error())
+		}
 
-	var wg sync.WaitGroup
-	for _, pod := range pods.Items {
-		wg.Add(1)
-		go func(pod corev1.Pod) {
-			defer wg.Done()
-			searchPodLogs(clientset, &pod, *pattern)
-		}(pod)
-	}
+		var wg sync.WaitGroup
+		for _, pod := range pods.Items {
+			wg.Add(1)
+			go func(pod corev1.Pod) {
+				defer wg.Done()
+				searchPodLogs(clientset, &pod, *pattern)
+			}(pod)
+		}
 
-	wg.Wait()
-	fmt.Println("Search completed.")
+		wg.Wait()
+		fmt.Println("Search completed.")
+	}
 }
 
 func createNamespaceAndPod(
 	clientset *kubernetes.Clientset,
 	nsName string,
-	psLabels map[string]string,
+	nsLabels map[string]string,
+	fieldManager string,
 ) error {
 	// Create namespace
 	namespace := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   nsName,
-			Labels: psLabels,
+			Name: nsName,
 		},
 	}
 
-	_, err := clientset.CoreV1().Namespaces().Create(context.TODO(), namespace, metav1.CreateOptions{})
+	if nsLabels != nil {
+		namespace.ObjectMeta.Labels = nsLabels
+	}
+
+	opts := metav1.CreateOptions{
+		FieldManager: fieldManager,
+	}
+
+	if fieldManager != "" {
+		opts.FieldManager = fieldManager
+	}
+
+	_, err := clientset.CoreV1().Namespaces().Create(context.TODO(), namespace, opts)
 	if err != nil {
 		return fmt.Errorf("error creating namespace: %v", err)
 	}
@@ -115,7 +160,7 @@ func createNamespaceAndPod(
 					Command: []string{
 						"sh",
 						"-c",
-						"echo 'Pod is running'; sleep 3600",
+						"echo 'Pod is running'; sleep infinity",
 					},
 					SecurityContext: &corev1.SecurityContext{
 						AllowPrivilegeEscalation: boolPtr(true),
@@ -128,14 +173,14 @@ func createNamespaceAndPod(
 	if err != nil {
 		return fmt.Errorf("error creating pod: %v", err)
 	}
-	fmt.Println("Pod created successfully")
+	fmt.Printf("Pod created successfully in namespace %s\n", nsName)
 
 	// Wait for the pod to be running
 	err = waitForPodRunning(clientset, nsName, "test-pod")
 	if err != nil {
 		return fmt.Errorf("error waiting for pod to be running: %v", err)
 	}
-	fmt.Println("Pod is now running")
+	fmt.Printf("Pod is now running in namespace %s\n", nsName)
 
 	return nil
 }
