@@ -45,10 +45,10 @@ Options:
 	debug: %t
 	kubeconfig: %s
 `,
-			pattern,
-			createResources,
-			getLogs,
-			debug,
+			*pattern,
+			*createResources,
+			*getLogs,
+			*debug,
 			kubeconfig,
 		)
 	}
@@ -133,9 +133,7 @@ func createNamespaceAndPod(
 		namespace.ObjectMeta.Labels = nsLabels
 	}
 
-	opts := metav1.CreateOptions{
-		FieldManager: fieldManager,
-	}
+	opts := metav1.CreateOptions{}
 
 	if fieldManager != "" {
 		opts.FieldManager = fieldManager
@@ -146,7 +144,6 @@ func createNamespaceAndPod(
 		return fmt.Errorf("error creating namespace: %v", err)
 	}
 
-	// Create pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pod",
@@ -230,6 +227,5 @@ func searchPodLogs(clientset *kubernetes.Clientset, pod *corev1.Pod, pattern str
 	}
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
+func boolPtr(b bool) *bool    { return &b }
+func int32Ptr(i int32) *int32 { return &i }
